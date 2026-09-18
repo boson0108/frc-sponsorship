@@ -35,7 +35,6 @@ PROJECTS_LOCK = "projects.json.lock"
 # 郵件解碼輔助功能
 # ==========================================
 def decode_str(s):
-    """安全解析信件標題中的編碼字元"""
     if not s: return ""
     try:
         value, charset = decode_header(s)[0]
@@ -183,14 +182,15 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 側邊欄：動態計算未讀訊息與導覽
+# 側邊欄：動態計算未讀訊息與導覽 (加入權限過濾)
 # ==========================================
 projects_db = load_projects()
 
 unread_count = 0
 for p_data in projects_db.values():
     for reply in p_data.get("replies", []):
-        if not reply.get("read", True):
+        # 如果是未讀，且 (身分是管理員 OR 這封信是自己負責的廠商回的)
+        if not reply.get("read", True) and (st.session_state.role == "admin" or reply.get("owner") == st.session_state.real_name):
             unread_count += 1
 
 st.sidebar.markdown(f"👤 登入者：**{st.session_state.real_name}**")
@@ -208,85 +208,105 @@ app_mode = st.sidebar.radio("📌 系統功能導覽", nav_options)
 st.sidebar.divider()
 
 # ==========================================
-# 模式 A：系統後台管理
+# 模式 A：系統後台管理 (僅 Admin 可見)
 # ==========================================
 if "⚙️ 系統後台管理" in app_mode:
     st.title("⚙️ 系統後台管理")
-    tab1, tab2 = st.tabs(["👥 帳號管理", "📊 團隊寄件總覽"])
+    tab1, tab2 = st.tabs(["👥 帳號管理與重設密碼", "📊 團隊寄件總覽"])
     
     with tab1:
-        st.subheader("建立新帳號")
-        with st.form("add_user_form"):
-            c1, c2, c3 = st.columns(3)
-            n_usr = c1.text_input("登入帳號").strip()
-            n_name = c2.text_input("成員姓名").strip()
-            n_pwd = c3.text_input("預設密碼", type="password").strip()
-            n_role = st.selectbox("帳號權限", ["user (一般)", "admin (管理員)"])
-            if st.form_submit_button("新增帳號", type="primary"):
-                users_db = load_users()
-                if n_usr in users_db: st.error("帳號已存在！")
-                elif not n_usr or not n_pwd: st.error("不得為空！")
-                else:
-                    users_db[n_usr] = {"password": hash_password(n_pwd), "role": "admin" if "admin" in n_role else "user", "real_name": n_name or n_usr}
-                    save_users(users_db)
-                    st.success(f"成功建立帳號：{n_name}")
-        st.table([{"帳號": u, "姓名": d.get("real_name", u), "權限": d.get("role", "user")} for u, d in load_users().items()])
+        col_new, col_reset = st.columns(2)
+        users_db = load_users()
+        
+        with col_new:
+            st.subheader("➕ 建立新帳號")
+            with st.form("add_user_form"):
+                n_usr = st.text_input("登入帳號").strip()
+                n_name = st.text_input("成員姓名").strip()
+                n_pwd = st.text_input("預設密碼", type="password").strip()
+                n_role = st.selectbox("帳號權限", ["user (一般)", "admin (管理員)"])
+                if st.form_submit_button("新增帳號", type="primary", use_container_width=True):
+                    if n_usr in users_db: st.error("帳號已存在！")
+                    elif not n_usr or not n_pwd: st.error("帳號密碼不得為空！")
+                    else:
+                        users_db[n_usr] = {"password": hash_password(n_pwd), "role": "admin" if "admin" in n_role else "user", "real_name": n_name or n_usr}
+                        save_users(users_db)
+                        st.success(f"成功建立帳號：{n_name}")
+                        st.rerun()
+                        
+        with col_reset:
+            st.subheader("🔑 重設成員密碼")
+            st.info("系統採用單向加密保護，無法反查舊密碼。若組員忘記密碼，請直接在此強制設定新密碼。")
+            with st.form("reset_pwd_form"):
+                target_user = st.selectbox("選擇要重設密碼的帳號", list(users_db.keys()))
+                new_pwd = st.text_input("輸入新密碼", type="password").strip()
+                if st.form_submit_button("強制重設密碼", type="primary", use_container_width=True):
+                    if not new_pwd:
+                        st.error("新密碼不得為空！")
+                    else:
+                        users_db[target_user]["password"] = hash_password(new_pwd)
+                        save_users(users_db)
+                        st.success(f"✅ 已成功將 {users_db[target_user].get('real_name', target_user)} 的密碼重設！")
+                        time.sleep(1.5)
+                        st.rerun()
+
+        st.subheader("📋 現有帳號列表")
+        st.table([{"登入帳號": u, "真實姓名": d.get("real_name", u), "權限": d.get("role", "user")} for u, d in users_db.items()])
 
     with tab2:
-        st.subheader("📂 專案進度與紀錄總覽")
+        st.subheader("📂 專案寄件紀錄總覽 (上帝視角)")
         for p_name, p_data in projects_db.items():
             sent_list = p_data.get("sent_companies", [])
-            with st.expander(f"📁 {p_name} (寄出 {len(sent_list)} 封)"):
+            with st.expander(f"📁 {p_name} (團隊共寄出 {len(sent_list)} 封)"):
                 for record in sent_list:
                     if isinstance(record, dict):
-                        st.markdown(f"- **{record.get('company', '?')}** (Email: {record.get('email', '未記錄')} | 寄件: {record.get('sender', '?')})")
+                        st.markdown(f"- **{record.get('company', '?')}** (Email: {record.get('email', '未記錄')} | 寄件負責人: **{record.get('sender', '?')}**)")
                     else:
                         st.markdown(f"- **{record}** (早期紀錄)")
 
 # ==========================================
-# 模式 B：收件與回信匣 (強制掃描與除錯版)
+# 模式 B：收件與回信匣 (權限隔離版)
 # ==========================================
 elif "📥 收件與回信匣" in app_mode:
     st.title("📥 廠商回信與通知中心")
-    st.markdown("系統會掃描團隊信箱，將**已經寄出過企劃書的廠商 Email** 來信自動拉取至此。")
+    if st.session_state.role == "admin":
+        st.markdown("您是管理員，可以看到團隊**所有人**的廠商回信紀錄。")
+    else:
+        st.markdown("此信匣已經過濾，**您只會看到您自己負責寄信的廠商回信**。")
     
     st.subheader("1. 郵件伺服器認證")
     col1, col2, col3 = st.columns([3, 3, 2])
     test_email = col1.text_input("團隊 Gmail 信箱", value=st.session_state.gmail_account).strip()
     test_pwd = col2.text_input("應用程式密碼", value=st.session_state.gmail_password, type="password").strip()
-    reply_folder = col3.text_input("自動歸檔資料夾名稱", value="FRC_Replies", help="請盡量使用英文，以防編碼錯誤")
+    reply_folder = col3.text_input("自動歸檔資料夾", value="FRC_Replies")
     
     if st.button("🔄 強制掃描近期回信", type="primary", use_container_width=True):
         if not test_email or not test_pwd:
-            st.error("請輸入信箱與應用程式密碼！")
+            st.error("請輸入信箱與密碼！")
         else:
-            with st.spinner("🚀 正在強制掃描 Gmail 近 3 天內所有信件，請稍候..."):
+            with st.spinner("🚀 正在掃描 Gmail 近 3 天內信件..."):
                 try:
                     mail = imaplib.IMAP4_SSL("imap.gmail.com", timeout=20)
                     mail.login(test_email, test_pwd)
-                    
                     status, _ = mail.select(reply_folder)
                     if status != 'OK': mail.create(reply_folder)
-                    
                     mail.select("INBOX")
                     
                     date_limit = (pd.Timestamp.now() - pd.Timedelta(days=3)).strftime("%d-%b-%Y")
                     status, messages = mail.search(None, f'(SINCE "{date_limit}")')
                     
-                    scanned_emails = []
-                    target_emails = []
-
                     if status == "OK" and messages[0]:
                         msg_nums = messages[0].split()
                         
+                        # 建立已知廠商 Email 清單對照表 (包含負責人資訊)
                         sent_map = {}
                         for p_name, p_data in projects_db.items():
                             if "replies" not in p_data: p_data["replies"] = []
                             for record in p_data.get("sent_companies", []):
                                 if isinstance(record, dict) and record.get("email"):
                                     clean_email = str(record["email"]).strip().lower()
-                                    sent_map[clean_email] = (p_name, record.get("company"))
-                                    target_emails.append(clean_email)
+                                    # 記錄: (專案名稱, 廠商名稱, 原始寄件負責人)
+                                    sent_map[clean_email] = (p_name, record.get("company"), record.get("sender"))
 
                         new_reply_count = 0
                         if len(msg_nums) > 100: msg_nums = msg_nums[-100:]
@@ -299,12 +319,10 @@ elif "📥 收件與回信匣" in app_mode:
                                     from_header = decode_str(header_msg.get("From"))
                                     _, addr = parseaddr(from_header)
                                     addr_lower = str(addr).strip().lower()
-                                    
                                     subject_check = decode_str(header_msg.get("Subject"))
-                                    scanned_emails.append(f"{addr_lower} (主旨: {subject_check})")
                                     
                                     if addr_lower in sent_map:
-                                        proj_name, company_name = sent_map[addr_lower]
+                                        proj_name, company_name, original_sender = sent_map[addr_lower]
                                         
                                         is_duplicate = False
                                         for existing_reply in projects_db[proj_name]["replies"]:
@@ -317,7 +335,6 @@ elif "📥 收件與回信匣" in app_mode:
                                             for full_response_part in full_msg_data:
                                                 if isinstance(full_response_part, tuple):
                                                     msg = email.message_from_bytes(full_response_part[1])
-                                                    
                                                     body = "無法解析文字內容"
                                                     if msg.is_multipart():
                                                         for part in msg.walk():
@@ -328,15 +345,17 @@ elif "📥 收件與回信匣" in app_mode:
                                                         try: body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
                                                         except: pass
                                                     
-                                                    clipped_body = body[:1000] + ("\n\n...(內容過長已省略，請至 Gmail 查看全文)" if len(body)>1000 else "")
-                                                        
+                                                    clipped_body = body[:1000] + ("\n...(內容過長已省略)" if len(body)>1000 else "")
+                                                    
+                                                    # 寫入資料庫時，標記這封信的所有權人是誰
                                                     projects_db[proj_name]["replies"].append({
                                                         "company": company_name,
                                                         "email": addr,
                                                         "subject": subject_check,
                                                         "body": clipped_body,
                                                         "read": False,
-                                                        "time": time.strftime("%Y-%m-%d %H:%M")
+                                                        "time": time.strftime("%Y-%m-%d %H:%M"),
+                                                        "owner": original_sender 
                                                     })
                                                     new_reply_count += 1
                                                     
@@ -344,20 +363,13 @@ elif "📥 收件與回信匣" in app_mode:
                                                     mail.store(num, '+FLAGS', '\\Deleted')
                         
                         mail.expunge()
-                        
                         if new_reply_count > 0:
                             save_projects(projects_db)
                             st.success(f"🎉 成功攔截 {new_reply_count} 封新回信！")
-                            time.sleep(2)
+                            time.sleep(1.5)
                             st.rerun()
                         else:
-                            st.info("掃描完成，但沒有發現『未處理過』的目標廠商回信。")
-                            
-                        with st.expander("🛠️ 工程師除錯資訊 (點我展開)"):
-                            st.warning(f"**資料庫裡記錄要找的目標 Email 有 {len(target_emails)} 個：**")
-                            st.write(target_emails)
-                            st.warning(f"**系統剛剛在信箱裡掃描到的最近幾封信來源是：**")
-                            st.write(scanned_emails[-10:])
+                            st.info("掃描完成，沒有發現未處理過的回信。")
                     else:
                         st.info("近 3 天內沒有收到任何信件。")
                     mail.logout()
@@ -372,16 +384,26 @@ elif "📥 收件與回信匣" in app_mode:
         replies = p_data.get("replies", [])
         if not replies: continue
         
+        # 依照權限過濾該專案下要顯示的回信
+        visible_replies = []
+        for idx, reply in enumerate(replies):
+            # Admin 可以看全部，User 只能看 owner 是自己的信
+            if st.session_state.role == "admin" or reply.get("owner") == st.session_state.real_name:
+                visible_replies.append((idx, reply))
+                
+        if not visible_replies:
+            continue
+            
         has_any_reply = True
         st.markdown(f"#### 📂 專案：{p_name}")
         
-        for idx, reply in enumerate(reversed(replies)):
-            real_idx = len(replies) - 1 - idx
+        # 反轉順序讓最新的在最上面
+        for real_idx, reply in reversed(visible_replies):
             is_unread = not reply.get("read", True)
             icon = "🔴" if is_unread else "🟢"
             
             with st.expander(f"{icon} 來自 {reply['company']} ({reply['email']}) - {reply['subject']}"):
-                st.caption(f"接收時間：{reply.get('time', '未知')}")
+                st.caption(f"接收時間：{reply.get('time', '未知')} | 負責人：{reply.get('owner', '未知')}")
                 st.text(reply['body'])
                 
                 if is_unread:
@@ -391,11 +413,11 @@ elif "📥 收件與回信匣" in app_mode:
                         st.rerun()
     
     if not has_any_reply:
-        st.info("目前資料庫中尚無任何廠商回信紀錄。")
+        st.info("目前尚無屬於您的廠商回信紀錄。")
 
 
 # ==========================================
-# 模式 C：專案與寄信區
+# 模式 C：專案與寄信區 (權限隔離版)
 # ==========================================
 elif "🏠 專案與寄信區" in app_mode:
     if st.session_state.page == "home":
@@ -417,11 +439,19 @@ elif "🏠 專案與寄信區" in app_mode:
         with col_list:
             st.subheader("📂 現有專案列表")
             for proj_name, proj_data in list(projects_db.items()):
+                # 計算屬於該登入者的寄件數量
+                sent_companies = proj_data.get('sent_companies', [])
+                if st.session_state.role == "admin":
+                    display_count = len(sent_companies)
+                else:
+                    display_count = sum(1 for r in sent_companies if isinstance(r, dict) and r.get('sender') == st.session_state.real_name)
+
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([6, 2, 2])
                     with c1:
                         st.markdown(f"#### {proj_name}")
-                        st.caption(f"寄出 {len(proj_data.get('sent_companies', []))} 封")
+                        label_text = "團隊共寄出" if st.session_state.role == "admin" else "您已寄出"
+                        st.caption(f"{label_text} {display_count} 封")
                     with c2:
                         if st.button("📂 開啟", key=f"open_{proj_name}", use_container_width=True):
                             st.session_state.current_project = proj_name
@@ -467,6 +497,18 @@ elif "🏠 專案與寄信區" in app_mode:
 
         st.header("Step 2 & 3: 載入與寄出")
         uploaded_file = st.file_uploader("上傳名單 (.xlsx)", type=["xlsx"])
+        
+        # 顯示該使用者已經寄送過的廠商 (權限過濾)
+        sent_list = proj_data.get("sent_companies", [])
+        my_sent_companies = []
+        for r in sent_list:
+            if isinstance(r, dict):
+                # 如果是管理員，就當作是已寄出，或者該紀錄就是自己寄的
+                if st.session_state.role == "admin" or r.get("sender") == st.session_state.real_name:
+                    my_sent_companies.append(r.get("company"))
+            elif st.session_state.role == "admin":
+                my_sent_companies.append(r)
+        
         if uploaded_file is not None:
             records = read_excel_data(uploaded_file)
             if records:
@@ -491,8 +533,8 @@ elif "🏠 專案與寄信區" in app_mode:
                     preview_text = safe_format_template(email_template, format_dict)
                     st.text(preview_text)
                     
-                    sent_list = proj_data.get("sent_companies", [])
-                    is_sent = any(isinstance(r, dict) and r.get("company") == selected_company for r in sent_list) or (selected_company in sent_list)
+                    # 判斷是否為「已寄出」按鈕
+                    is_sent = selected_company in my_sent_companies
                     
                     if st.button("🚀 再次寄送" if is_sent else "🚀 確定寄送", type="primary"):
                         if not sender_email or not sender_password or not to_email:
@@ -525,6 +567,7 @@ elif "🏠 專案與寄信區" in app_mode:
                                         imap.logout()
                                     except: pass
                                     
+                                    # 寫入紀錄 (包含發件人姓名與 Email，供回信比對)
                                     if not is_sent:
                                         proj_data["sent_companies"].append({
                                             "company": selected_company,
