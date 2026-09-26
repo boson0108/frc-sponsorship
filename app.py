@@ -314,7 +314,7 @@ elif "📥 收件與回信匣" in app_mode:
                     save_projects(projects_db)
                     st.rerun()
     if not has_any: st.info("尚無紀錄。")
-    # ==========================================
+# ==========================================
 # 模式 C：專案與寄信區
 # ==========================================
 elif "🏠 專案與寄信區" in app_mode:
@@ -330,7 +330,8 @@ elif "🏠 專案與寄信區" in app_mode:
                     if not new_proj_name: st.error("不能為空！")
                     elif new_proj_name in projects_db: st.error("已存在！")
                     else:
-                        projects_db[new_proj_name] = {"sent_companies": [], "template": "", "replies": [], "mode": "bulk" if "群發" in proj_mode else "individual"}
+                        # 建立專案時，給予預設的主旨
+                        projects_db[new_proj_name] = {"sent_companies": [], "template": "", "subject": "【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}", "replies": [], "mode": "bulk" if "群發" in proj_mode else "individual"}
                         save_projects(projects_db)
                         st.rerun()
         with col_list:
@@ -377,14 +378,20 @@ elif "🏠 專案與寄信區" in app_mode:
         team_name = c1.text_input("團隊名稱", value="").strip()
         contact_person = c2.text_input("聯絡人", value="").strip()
         contact_phone = c3.text_input("電話", value="").strip()
+        
+        # 🌟 新增：信件主旨自訂欄位
+        email_subject = st.text_input("📌 信件主旨 (標題)", value=p_data.get("subject", "【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}"), placeholder="例如：【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}")
+        
         email_template = st.text_area("✏️ 內容", value=p_data.get("template", ""), height=200, placeholder="信件內容，可使用 {變數}，並在此處直接貼上網址或連結")
-        if email_template != p_data.get("template"):
+        
+        # 儲存變更
+        if email_template != p_data.get("template") or email_subject != p_data.get("subject"):
             projects_db[curr_proj]["template"] = email_template
+            projects_db[curr_proj]["subject"] = email_subject
             save_projects(projects_db)
 
         st.header("Step 2 & 3: 載入與寄出")
         
-        # A 方案：僅需上傳 Excel 名單，不須上傳圖片
         uploaded_file = st.file_uploader("📊 上傳 Excel 名單", type=["xlsx"])
         
         sent_list = p_data.get("sent_companies", [])
@@ -403,7 +410,11 @@ elif "🏠 專案與寄信區" in app_mode:
                         fmt_dict.update({"team_name": team_name, "contact_person": contact_person, "contact_phone": contact_phone, "pdf_filename": f"{str(first.get('編號', '000')).zfill(3)}_{first.get('企業／贊助單位')}_贊助企劃書.pdf"})
                         prev_text = safe_format_template(email_template, fmt_dict)
                         
-                        st.write("--- 預覽 ---")
+                        # 🌟 新增：預覽主旨變化
+                        prev_subj = safe_format_template(email_subject, fmt_dict)
+                        st.write(f"**✉️ 預覽主旨：** {prev_subj}")
+                        
+                        st.write("--- 預覽內容 ---")
                         st.text(prev_text)
                         st.write("-------------")
                         
@@ -436,10 +447,14 @@ elif "🏠 專案與寄信區" in app_mode:
                                             f_dict.update({"team_name": team_name, "contact_person": contact_person, "contact_phone": contact_phone, "pdf_filename": pdf_name})
                                             
                                             raw_t = safe_format_template(email_template, f_dict)
-                                            msg = MIMEMultipart()
-                                            msg['From'], msg['To'], msg['Subject'] = sender_email, to_mail, f"【通知】{team_name} — 敬致 {comp}"
+                                            # 🌟 新增：產生自訂主旨
+                                            formatted_subj = safe_format_template(email_subject, f_dict)
                                             
-                                            # A 方案：回復為純文字模式
+                                            msg = MIMEMultipart()
+                                            msg['From'] = sender_email
+                                            msg['To'] = to_mail
+                                            msg['Subject'] = formatted_subj  # 使用自訂主旨
+                                            
                                             msg.attach(MIMEText(raw_t, 'plain', 'utf-8'))
                                                 
                                             if os.path.exists(pdf_p):
@@ -478,8 +493,11 @@ elif "🏠 專案與寄信區" in app_mode:
                         f_dict.update({"team_name": team_name, "contact_person": contact_person, "contact_phone": contact_phone, "pdf_filename": pdf_name})
                         
                         raw_t = safe_format_template(email_template, f_dict)
+                        # 🌟 新增：產生自訂主旨
+                        formatted_subj = safe_format_template(email_subject, f_dict)
                         
-                        st.write("--- 預覽 ---")
+                        st.write(f"**✉️ 預覽主旨：** {formatted_subj}")
+                        st.write("--- 預覽內容 ---")
                         st.text(raw_t)
                         st.write("-------------")
                         
@@ -494,9 +512,10 @@ elif "🏠 專案與寄信區" in app_mode:
                                         server.login(sender_email, sender_password)
                                         
                                         msg = MIMEMultipart()
-                                        msg['From'], msg['To'], msg['Subject'] = sender_email, to_mail, f"【通知】{team_name} — 敬致 {sel_c}"
+                                        msg['From'] = sender_email
+                                        msg['To'] = to_mail
+                                        msg['Subject'] = formatted_subj  # 使用自訂主旨
                                         
-                                        # A 方案：回復為純文字模式
                                         msg.attach(MIMEText(raw_t, 'plain', 'utf-8'))
                                         
                                         if os.path.exists(pdf_p):
