@@ -181,7 +181,7 @@ st.sidebar.divider()
 # ==========================================
 if "⚙️ 系統後台管理" in app_mode:
     st.title("⚙️ 系統後台管理")
-    tab1, tab2 = st.tabs(["👥 帳號管理與重設密碼", "📊 團隊寄件總覽"])
+    tab1, tab2, tab3 = st.tabs(["👥 帳號管理與重設密碼", "📊 團隊寄件總覽", "💾 系統資料備份與還原 (重要)"])
     with tab1:
         col_new, col_reset = st.columns(2)
         users_db = load_users()
@@ -213,6 +213,7 @@ if "⚙️ 系統後台管理" in app_mode:
                         st.success("✅ 密碼已重設！")
                         st.rerun()
         st.table([{"帳號": u, "姓名": d.get("real_name", u), "權限": d.get("role", "user")} for u, d in users_db.items()])
+    
     with tab2:
         st.subheader("📂 寄件紀錄總覽")
         for p_name, p_data in projects_db.items():
@@ -221,6 +222,38 @@ if "⚙️ 系統後台管理" in app_mode:
                 for record in sent_list:
                     if isinstance(record, dict): st.write(f"- {record.get('company', '?')} (負責人: {record.get('sender', '?')})")
                     else: st.write(f"- {record}")
+                    
+    with tab3:
+        st.subheader("📥 步驟一：下載目前資料 (更新程式前使用)")
+        st.warning("⚠️ 提醒：只要去 GitHub 更新程式碼，雲端主機就會重新開機並清空資料！\n**請在每次調整程式碼前，務必先下載這兩個檔案當作備份。**")
+        
+        c_u, c_p = st.columns(2)
+        with c_u:
+            if os.path.exists(USERS_FILE):
+                with open(USERS_FILE, "r", encoding="utf-8") as f:
+                    st.download_button("📥 點我下載 帳號資料 (users.json)", f.read(), "users.json", use_container_width=True)
+        with c_p:
+            if os.path.exists(PROJECTS_FILE):
+                with open(PROJECTS_FILE, "r", encoding="utf-8") as f:
+                    st.download_button("📥 點我下載 專案資料 (projects.json)", f.read(), "projects.json", use_container_width=True)
+                    
+        st.divider()
+        st.subheader("📤 步驟二：上傳舊資料還原 (更新程式後使用)")
+        st.info("如果您剛更新完系統，發現資料都被清空了，請把剛剛下載的兩個檔案上傳回來並點擊還原。")
+        up_u = st.file_uploader("上傳 users.json", type=["json"])
+        up_p = st.file_uploader("上傳 projects.json", type=["json"])
+        
+        if st.button("🔄 確定還原資料", type="primary"):
+            if up_u or up_p:
+                if up_u:
+                    with open(USERS_FILE, "wb") as f: f.write(up_u.getvalue())
+                if up_p:
+                    with open(PROJECTS_FILE, "wb") as f: f.write(up_p.getvalue())
+                st.success("✅ 資料還原成功！系統正在重新載入...")
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.error("⚠️ 請至少上傳一個檔案才能還原！")
 
 # ==========================================
 # 模式 B：收件與回信匣
@@ -229,12 +262,13 @@ elif "📥 收件與回信匣" in app_mode:
     st.title("📥 廠商回信與通知中心")
     st.subheader("1. 郵件伺服器認證")
     col1, col2, col3 = st.columns([3, 3, 2])
-    test_email = col1.text_input("團隊 Gmail 信箱", value=st.session_state.gmail_account).strip()
-    test_pwd = col2.text_input("應用程式密碼", value=st.session_state.gmail_password, type="password").strip()
-    reply_folder = col3.text_input("歸檔資料夾", value="FRC_Replies")
+    test_email = col1.text_input("團隊 Gmail 信箱", value=st.session_state.gmail_account, placeholder="輸入完整的 Gmail 信箱").strip()
+    test_pwd = col2.text_input("應用程式密碼", value=st.session_state.gmail_password, type="password", placeholder="輸入 16 碼應用程式密碼").strip()
+    # 🌟 修改：清空資料夾名稱預設值
+    reply_folder = col3.text_input("歸檔資料夾", value="", placeholder="例如：FRC_Replies").strip()
     
     if st.button("🔄 強制掃描近期回信", type="primary", use_container_width=True):
-        if not test_email or not test_pwd: st.error("請輸入信箱密碼！")
+        if not test_email or not test_pwd or not reply_folder: st.error("信箱、密碼與資料夾名稱不得為空！")
         else:
             with st.spinner("🚀 掃描中..."):
                 try:
@@ -314,7 +348,7 @@ elif "📥 收件與回信匣" in app_mode:
                     save_projects(projects_db)
                     st.rerun()
     if not has_any: st.info("尚無紀錄。")
-# ==========================================
+    # ==========================================
 # 模式 C：專案與寄信區
 # ==========================================
 elif "🏠 專案與寄信區" in app_mode:
@@ -324,14 +358,14 @@ elif "🏠 專案與寄信區" in app_mode:
         with col_new:
             st.subheader("➕ 建立新專案")
             with st.form("new_project_form"):
-                new_proj_name = st.text_input("專案命名").strip()
+                new_proj_name = st.text_input("專案命名", placeholder="例如：112學年度學生會招募").strip()
                 proj_mode = st.radio("模式", ["個別寄送", "一鍵群發"])
                 if st.form_submit_button("建立專案", type="primary", use_container_width=True):
                     if not new_proj_name: st.error("不能為空！")
                     elif new_proj_name in projects_db: st.error("已存在！")
                     else:
-                        # 建立專案時，給予預設的主旨
-                        projects_db[new_proj_name] = {"sent_companies": [], "template": "", "subject": "【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}", "replies": [], "mode": "bulk" if "群發" in proj_mode else "individual"}
+                        # 🌟 修改：建立專案時，預設信件主旨與內容皆為空字串
+                        projects_db[new_proj_name] = {"sent_companies": [], "template": "", "subject": "", "replies": [], "mode": "bulk" if "群發" in proj_mode else "individual"}
                         save_projects(projects_db)
                         st.rerun()
         with col_list:
@@ -363,28 +397,29 @@ elif "🏠 專案與寄信區" in app_mode:
             st.rerun()
         st.sidebar.divider()
         st.sidebar.header("🔐 寄件帳號設定")
-        sender_email = st.sidebar.text_input("Gmail", value=st.session_state.gmail_account).strip()
-        sender_password = st.sidebar.text_input("密碼", value=st.session_state.gmail_password, type="password").strip()
+        sender_email = st.sidebar.text_input("Gmail", value=st.session_state.gmail_account, placeholder="輸入您的 Gmail 信箱").strip()
+        sender_password = st.sidebar.text_input("密碼", value=st.session_state.gmail_password, type="password", placeholder="輸入您的 16 碼應用程式密碼").strip()
         st.session_state.gmail_account, st.session_state.gmail_password = sender_email, sender_password
+        
         st.sidebar.header("📂 系統設定")
-        pdf_dir = st.sidebar.text_input("附件資料夾", value="企劃書檔案").strip()
-        backup_folder = st.sidebar.text_input("備份標籤", value="FRC_Sponsorship").strip()
+        # 🌟 修改：清空附件與備份資料夾預設值
+        pdf_dir = st.sidebar.text_input("附件資料夾", value="", placeholder="例如：企劃書檔案").strip()
+        backup_folder = st.sidebar.text_input("備份標籤", value="", placeholder="例如：FRC_Sponsorship").strip()
 
         st.title(f"📁 專案：{curr_proj}")
         st.divider()
 
         st.header("Step 1: 團隊與信件格式")
         c1, c2, c3 = st.columns(3)
-        team_name = c1.text_input("團隊名稱", value="").strip()
-        contact_person = c2.text_input("聯絡人", value="").strip()
-        contact_phone = c3.text_input("電話", value="").strip()
+        # 🌟 修改：清空聯絡人資訊預設值
+        team_name = c1.text_input("團隊名稱", value="", placeholder="例如：明道中學學生會").strip()
+        contact_person = c2.text_input("聯絡人", value="", placeholder="例如：會長 王小明").strip()
+        contact_phone = c3.text_input("電話", value="", placeholder="例如：0912-345-678").strip()
         
-        # 🌟 新增：信件主旨自訂欄位
-        email_subject = st.text_input("📌 信件主旨 (標題)", value=p_data.get("subject", "【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}"), placeholder="例如：【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}")
+        # 🌟 修改：清空信件主旨與內容預設值
+        email_subject = st.text_input("📌 信件主旨 (標題)", value=p_data.get("subject", ""), placeholder="例如：【錄取通知】明道中學學生會 — 敬致 {企業／贊助單位}")
+        email_template = st.text_area("✏️ 內容", value=p_data.get("template", ""), height=200, placeholder="在此輸入信件內容，可使用 {大括號} 自動替換變數")
         
-        email_template = st.text_area("✏️ 內容", value=p_data.get("template", ""), height=200, placeholder="信件內容，可使用 {變數}，並在此處直接貼上網址或連結")
-        
-        # 儲存變更
         if email_template != p_data.get("template") or email_subject != p_data.get("subject"):
             projects_db[curr_proj]["template"] = email_template
             projects_db[curr_proj]["subject"] = email_subject
@@ -409,11 +444,9 @@ elif "🏠 專案與寄信區" in app_mode:
                         fmt_dict = dict(first)
                         fmt_dict.update({"team_name": team_name, "contact_person": contact_person, "contact_phone": contact_phone, "pdf_filename": f"{str(first.get('編號', '000')).zfill(3)}_{first.get('企業／贊助單位')}_贊助企劃書.pdf"})
                         prev_text = safe_format_template(email_template, fmt_dict)
-                        
-                        # 🌟 新增：預覽主旨變化
                         prev_subj = safe_format_template(email_subject, fmt_dict)
-                        st.write(f"**✉️ 預覽主旨：** {prev_subj}")
                         
+                        st.write(f"**✉️ 預覽主旨：** {prev_subj}")
                         st.write("--- 預覽內容 ---")
                         st.text(prev_text)
                         st.write("-------------")
@@ -431,7 +464,9 @@ elif "🏠 專案與寄信區" in app_mode:
                                     try:
                                         imap = imaplib.IMAP4_SSL("imap.gmail.com", timeout=15)
                                         imap.login(sender_email, sender_password)
-                                        if imap.select(backup_folder)[0] != 'OK': imap.create(backup_folder)
+                                        # 如果欄位為空，就不建立備份標籤
+                                        if backup_folder and imap.select(backup_folder)[0] != 'OK': 
+                                            imap.create(backup_folder)
                                     except:
                                         imap = None
                                         
@@ -442,29 +477,28 @@ elif "🏠 專案與寄信區" in app_mode:
                                         stxt.text(f"寄送中: {comp}...")
                                         if to_mail:
                                             pdf_name = f"{str(r_data.get('編號', '000')).zfill(3)}_{comp}_贊助企劃書.pdf"
-                                            pdf_p = os.path.join(pdf_dir, pdf_name)
+                                            pdf_p = os.path.join(pdf_dir, pdf_name) if pdf_dir else ""
                                             f_dict = dict(r_data)
                                             f_dict.update({"team_name": team_name, "contact_person": contact_person, "contact_phone": contact_phone, "pdf_filename": pdf_name})
                                             
                                             raw_t = safe_format_template(email_template, f_dict)
-                                            # 🌟 新增：產生自訂主旨
                                             formatted_subj = safe_format_template(email_subject, f_dict)
                                             
                                             msg = MIMEMultipart()
                                             msg['From'] = sender_email
                                             msg['To'] = to_mail
-                                            msg['Subject'] = formatted_subj  # 使用自訂主旨
-                                            
+                                            msg['Subject'] = formatted_subj
                                             msg.attach(MIMEText(raw_t, 'plain', 'utf-8'))
                                                 
-                                            if os.path.exists(pdf_p):
+                                            if pdf_p and os.path.exists(pdf_p):
                                                 with open(pdf_p, 'rb') as f:
                                                     att = MIMEApplication(f.read(), _subtype="pdf")
                                                     att.add_header('Content-Disposition', 'attachment', filename=pdf_name)
                                                     msg.attach(att)
                                                     
                                             server.send_message(msg)
-                                            if imap:
+                                            
+                                            if imap and backup_folder:
                                                 try: imap.append(backup_folder, '\\Seen', imaplib.Time2Internaldate(time.time()), msg.as_bytes())
                                                 except: pass
                                             
@@ -488,12 +522,11 @@ elif "🏠 專案與寄信區" in app_mode:
                         if to_mail: st.success(f"目標信箱: `{to_mail}`")
                         
                         pdf_name = f"{str(r_data.get('編號', '000')).zfill(3)}_{sel_c}_贊助企劃書.pdf"
-                        pdf_p = os.path.join(pdf_dir, pdf_name)
+                        pdf_p = os.path.join(pdf_dir, pdf_name) if pdf_dir else ""
                         f_dict = dict(r_data)
                         f_dict.update({"team_name": team_name, "contact_person": contact_person, "contact_phone": contact_phone, "pdf_filename": pdf_name})
                         
                         raw_t = safe_format_template(email_template, f_dict)
-                        # 🌟 新增：產生自訂主旨
                         formatted_subj = safe_format_template(email_subject, f_dict)
                         
                         st.write(f"**✉️ 預覽主旨：** {formatted_subj}")
@@ -514,11 +547,10 @@ elif "🏠 專案與寄信區" in app_mode:
                                         msg = MIMEMultipart()
                                         msg['From'] = sender_email
                                         msg['To'] = to_mail
-                                        msg['Subject'] = formatted_subj  # 使用自訂主旨
-                                        
+                                        msg['Subject'] = formatted_subj
                                         msg.attach(MIMEText(raw_t, 'plain', 'utf-8'))
                                         
-                                        if os.path.exists(pdf_p):
+                                        if pdf_p and os.path.exists(pdf_p):
                                             with open(pdf_p, 'rb') as f:
                                                 att = MIMEApplication(f.read(), _subtype="pdf")
                                                 att.add_header('Content-Disposition', 'attachment', filename=pdf_name)
@@ -530,8 +562,9 @@ elif "🏠 專案與寄信區" in app_mode:
                                         try:
                                             imap = imaplib.IMAP4_SSL("imap.gmail.com", timeout=10)
                                             imap.login(sender_email, sender_password)
-                                            if imap.select(backup_folder)[0] != 'OK': imap.create(backup_folder)
-                                            imap.append(backup_folder, '\\Seen', imaplib.Time2Internaldate(time.time()), msg.as_bytes())
+                                            if backup_folder:
+                                                if imap.select(backup_folder)[0] != 'OK': imap.create(backup_folder)
+                                                imap.append(backup_folder, '\\Seen', imaplib.Time2Internaldate(time.time()), msg.as_bytes())
                                             imap.logout()
                                         except: pass
                                         
